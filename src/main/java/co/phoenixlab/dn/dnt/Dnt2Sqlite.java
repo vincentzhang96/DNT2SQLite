@@ -24,10 +24,62 @@
 
 package co.phoenixlab.dn.dnt;
 
+import java.io.IOException;
+import java.nio.file.Path;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.SQLException;
+import java.util.function.DoubleConsumer;
+
 public class Dnt2Sqlite {
+
+    static {
+        try {
+            Class.forName("org.sqlite.JDBC");
+        } catch (ClassNotFoundException e) {
+            throw new RuntimeException("SQLite-JDBC driver not found! Make sure sqlite-jdbc is on the classpath.");
+        }
+    }
 
     public static void main(String[] args) {
 
     }
 
+    private final DoubleConsumer noOpListener;
+
+    public Dnt2Sqlite() {
+        noOpListener = d -> {
+        };
+    }
+
+    public void convert(Path dntFileIn, Path sqliteFileOut)
+            throws SQLException, IOException {
+        convert(dntFileIn, sqliteFileOut, noOpListener);
+    }
+
+    public void convert(Path dntFileIn, Path sqliteFileOut, DoubleConsumer progressListener)
+            throws SQLException, IOException {
+        String jdbcUri = "jdbc:sqlite:" + sqliteFileOut.toString().replace('\\', '/');
+        try (Connection connection = DriverManager.getConnection(jdbcUri)) {
+            process(dntFileIn, connection, progressListener);
+        }
+    }
+
+    public Connection readDntAsInMemoryDb(Path dntFileIn)
+            throws SQLException, IOException {
+        return readDntAsInMemoryDb(dntFileIn, noOpListener);
+    }
+
+    public Connection readDntAsInMemoryDb(Path dntFileIn, DoubleConsumer progressListener)
+            throws SQLException, IOException {
+        Connection connection = DriverManager.getConnection("jdbc:sqlite::memory:");
+        process(dntFileIn, connection, progressListener);
+        return connection;
+    }
+
+    private void process(Path dntFileIn, Connection connection, DoubleConsumer progressListener)
+            throws SQLException, IOException {
+        Dnt2SqliteReader reader = new Dnt2SqliteReader(dntFileIn, connection);
+        reader.read(progressListener);
+    }
 }
