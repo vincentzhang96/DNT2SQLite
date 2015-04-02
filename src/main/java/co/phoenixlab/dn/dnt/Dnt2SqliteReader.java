@@ -31,9 +31,11 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.channels.FileChannel;
 import java.nio.channels.SeekableByteChannel;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.SQLException;
+import java.util.NoSuchElementException;
 import java.util.function.DoubleConsumer;
 
 class Dnt2SqliteReader {
@@ -58,6 +60,23 @@ class Dnt2SqliteReader {
         @Override
         public String toString() {
             return sqlName;
+        }
+
+        public static DataType fromId(int id) {
+            switch (id) {
+                case 1:
+                    return STRING;
+                case 2:
+                    return BOOL;
+                case 3:
+                    return INT32;
+                case 4:
+                    return FLOAT;
+                case 5:
+                    return DOUBLE;
+                default:
+                    throw new NoSuchElementException("No DataType with ID " + id);
+            }
         }
     }
 
@@ -90,8 +109,19 @@ class Dnt2SqliteReader {
             }
             int numColumns = Short.toUnsignedInt(slicedBuffer.getShort());
             long rowCount = Integer.toUnsignedLong(slicedBuffer.getInt());
-            slicedBuffer.rewind();
-
+            Column[] columns = new Column[numColumns];
+            for (int i = 0; i < numColumns; i++) {
+                int nameLen = randomAccessFile.readUnsignedShort();
+                nameLen = (nameLen & 0xFF) << 8 | ((nameLen >> 8) & 0xFF);   //  Endian swap
+                slicedBuffer.rewind();
+                slicedBuffer.limit(nameLen + 1);
+                fillBuffer(fileChannel, slicedBuffer);
+                byte[] stringBytes = new byte[nameLen];
+                slicedBuffer.get(stringBytes);
+                String name = new String(stringBytes, StandardCharsets.UTF_8);
+                DataType dataType = DataType.fromId(slicedBuffer.get());
+                columns[i] = new Column(name, dataType);
+            }
         } catch (EOFException eof) {
             throw new InvalidDntException(dntFile, "Unexpected EOF");
         }
@@ -117,6 +147,11 @@ class Dnt2SqliteReader {
         public Column(String name, DataType dataType) {
             this.name = name;
             this.dataType = dataType;
+        }
+
+        @Override
+        public String toString() {
+            return String.format("name=%s type=%s", name, dataType.name());
         }
     }
 }
