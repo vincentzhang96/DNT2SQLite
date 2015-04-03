@@ -31,6 +31,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.NoSuchElementException;
@@ -97,11 +98,64 @@ class Dnt2SqliteReader {
                 new DataInputStream(
                         Files.newInputStream(dntFile, StandardOpenOption.READ)))) {
             validateMagicNumber(inputStream.readInt());
-            Column[] columns = new Column[inputStream.readUnsignedShort()];
+            Column[] columns = new Column[inputStream.readUnsignedShort() + 1];
             long rowCount = inputStream.readUnsignedInt();
             readColumnHeaders(inputStream, columns);
             dropTableIfExistsAndCreate(columns);
-            
+            readRows(progressListener, inputStream, columns, rowCount);
+            progressListener.accept(1D);
+        }
+    }
+
+    private void readRows(DoubleConsumer progressListener, LittleEndianDataInputStream inputStream, Column[] columns, long rowCount) throws SQLException, IOException {
+        dbConnection.setAutoCommit(false);
+        StringJoiner joiner = new StringJoiner(",", "INSERT INTO Data VALUES(", ");");
+        for (int i = 0; i < columns.length; i++) {
+            joiner.add("?");
+        }
+        long interval = Math.max(1, rowCount / 20);
+        try (PreparedStatement statement = dbConnection.prepareStatement(joiner.toString())) {
+            for (long row = 0; row < rowCount; row++) {
+                readRowData(inputStream, columns, statement);
+                statement.executeUpdate();
+                if (row % interval == 0) {
+                    dbConnection.commit();
+                }
+                progressListener.accept((double) row / (double) rowCount);
+            }
+        }
+        dbConnection.commit();
+        dbConnection.setAutoCommit(true);
+    }
+
+    private void readRowData(LittleEndianDataInputStream inputStream, Column[] columns, PreparedStatement statement) throws SQLException, IOException {
+        for (int i = 1; i <= columns.length; i++) {
+            Column column = columns[i - 1];
+            switch (column.dataType) {
+                case DOUBLE:
+                    statement.setDouble(i, inputStream.readFloat());
+                    break;
+                case FLOAT:
+                    statement.setFloat(i, inputStream.readFloat());
+                    break;
+                case INT32:
+                    statement.setInt(i, inputStream.readInt());
+                    break;
+                case BOOL:
+                    statement.setInt(i, inputStream.readInt());
+                    break;
+                case STRING:
+                    int len = inputStream.readUnsignedShort();
+                    byte[] strBytes = new byte[len];
+                    inputStream.readFully(strBytes);
+                    statement.setString(i, new String(strBytes, StandardCharsets.UTF_8));
+                    break;
+                case UINT32:
+                    statement.setInt(i, inputStream.readInt());
+                    break;
+                default:
+                    throw new IllegalStateException("This shouldn't happen, this is for happy compiler");
+            }
         }
     }
 
@@ -115,7 +169,8 @@ class Dnt2SqliteReader {
     }
 
     private void readColumnHeaders(LittleEndianDataInputStream inputStream, Column[] columns) throws IOException {
-        for (int i = 0; i < columns.length; i++) {
+        columns[0] = new Column("RowId", DataType.INT32);
+        for (int i = 1; i < columns.length; i++) {
             int nameLen = inputStream.readUnsignedShort();
             byte[] stringBytes = new byte[nameLen];
             inputStream.readFully(stringBytes);
