@@ -24,18 +24,20 @@
 
 package co.phoenixlab.dn.dnt;
 
+import java.io.DataInputStream;
 import java.io.EOFException;
 import java.io.IOException;
-import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
-import java.nio.channels.FileChannel;
 import java.nio.channels.SeekableByteChannel;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.sql.Connection;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.NoSuchElementException;
+import java.util.StringJoiner;
 import java.util.function.DoubleConsumer;
 
 class Dnt2SqliteReader {
@@ -94,36 +96,36 @@ class Dnt2SqliteReader {
     public void read(DoubleConsumer progressListener)
             throws SQLException, IOException {
         progressListener.accept(0D);
-        try (RandomAccessFile randomAccessFile = new RandomAccessFile(dntFile.toFile(), "r")) {
-            FileChannel fileChannel = randomAccessFile.getChannel();
-            ByteBuffer buffer = ByteBuffer.allocate(0xFFFF).order(ByteOrder.LITTLE_ENDIAN);
-            ByteBuffer slicedBuffer = buffer.slice().order(ByteOrder.LITTLE_ENDIAN);
-            slicedBuffer.limit(HEADER_SIZE);
-            fillBuffer(fileChannel, slicedBuffer);
-            int magic = slicedBuffer.getInt();
+        try (LittleEndianDataInputStream inputStream = new LittleEndianDataInputStream(
+                new DataInputStream(
+                        Files.newInputStream(dntFile, StandardOpenOption.READ)))) {
+            int magic = inputStream.readInt();
             if (magic != MAGIC_NUMBER) {
                 throw new InvalidDntException(dntFile,
                         String.format("Magic number mismatch, expected 0x%08X, got 0x%08X",
                                 MAGIC_NUMBER,
                                 magic));
             }
-            int numColumns = Short.toUnsignedInt(slicedBuffer.getShort());
-            long rowCount = Integer.toUnsignedLong(slicedBuffer.getInt());
+            int numColumns = inputStream.readUnsignedShort();
+            long rowCount = inputStream.readUnsignedInt();
             Column[] columns = new Column[numColumns];
             for (int i = 0; i < numColumns; i++) {
-                int nameLen = randomAccessFile.readUnsignedShort();
-                nameLen = (nameLen & 0xFF) << 8 | ((nameLen >> 8) & 0xFF);   //  Endian swap
-                slicedBuffer.rewind();
-                slicedBuffer.limit(nameLen + 1);
-                fillBuffer(fileChannel, slicedBuffer);
+                int nameLen = inputStream.readUnsignedShort();
                 byte[] stringBytes = new byte[nameLen];
-                slicedBuffer.get(stringBytes);
+                inputStream.readFully(stringBytes);
                 String name = new String(stringBytes, StandardCharsets.UTF_8);
-                DataType dataType = DataType.fromId(slicedBuffer.get());
+                DataType dataType = DataType.fromId(inputStream.readUnsignedByte());
                 columns[i] = new Column(name, dataType);
             }
-        } catch (EOFException eof) {
-            throw new InvalidDntException(dntFile, "Unexpected EOF");
+            StringJoiner createTableJoiner = new StringJoiner(", ", "CREATE TABLE Data (", ");");
+            for (Column column : columns) {
+                createTableJoiner.add(column.name + " " + column.dataType);
+            }
+            //  Drop existing data table and create new data table
+            try (Statement statement = dbConnection.createStatement()) {
+                statement.executeUpdate("DROP TABLE IF EXISTS Data;");
+                statement.executeUpdate(createTableJoiner.toString());
+            }
         }
     }
 
