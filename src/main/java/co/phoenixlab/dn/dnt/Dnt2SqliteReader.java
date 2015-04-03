@@ -54,6 +54,7 @@ class Dnt2SqliteReader {
         private DataType(String sqlName) {
             this.sqlName = sqlName;
         }
+
         public final String sqlName;
 
         @Override
@@ -95,33 +96,44 @@ class Dnt2SqliteReader {
         try (LittleEndianDataInputStream inputStream = new LittleEndianDataInputStream(
                 new DataInputStream(
                         Files.newInputStream(dntFile, StandardOpenOption.READ)))) {
-            int magic = inputStream.readInt();
-            if (magic != MAGIC_NUMBER) {
-                throw new InvalidDntException(dntFile,
-                        String.format("Magic number mismatch, expected 0x%08X, got 0x%08X",
-                                MAGIC_NUMBER,
-                                magic));
-            }
-            int numColumns = inputStream.readUnsignedShort();
+            validateMagicNumber(inputStream.readInt());
+            Column[] columns = new Column[inputStream.readUnsignedShort()];
             long rowCount = inputStream.readUnsignedInt();
-            Column[] columns = new Column[numColumns];
-            for (int i = 0; i < numColumns; i++) {
-                int nameLen = inputStream.readUnsignedShort();
-                byte[] stringBytes = new byte[nameLen];
-                inputStream.readFully(stringBytes);
-                String name = new String(stringBytes, StandardCharsets.UTF_8);
-                DataType dataType = DataType.fromId(inputStream.readUnsignedByte());
-                columns[i] = new Column(name, dataType);
-            }
-            StringJoiner createTableJoiner = new StringJoiner(", ", "CREATE TABLE Data (", ");");
-            for (Column column : columns) {
-                createTableJoiner.add(column.name + " " + column.dataType);
-            }
-            //  Drop existing data table and create new data table
-            try (Statement statement = dbConnection.createStatement()) {
-                statement.executeUpdate("DROP TABLE IF EXISTS Data;");
-                statement.executeUpdate(createTableJoiner.toString());
-            }
+            readColumnHeaders(inputStream, columns);
+            dropTableIfExistsAndCreate(columns);
+            
+        }
+    }
+
+    private void validateMagicNumber(int magic) throws IOException {
+        if (magic != MAGIC_NUMBER) {
+            throw new InvalidDntException(dntFile,
+                    String.format("Magic number mismatch, expected 0x%08X, got 0x%08X",
+                            MAGIC_NUMBER,
+                            magic));
+        }
+    }
+
+    private void readColumnHeaders(LittleEndianDataInputStream inputStream, Column[] columns) throws IOException {
+        for (int i = 0; i < columns.length; i++) {
+            int nameLen = inputStream.readUnsignedShort();
+            byte[] stringBytes = new byte[nameLen];
+            inputStream.readFully(stringBytes);
+            String name = new String(stringBytes, StandardCharsets.UTF_8);
+            DataType dataType = DataType.fromId(inputStream.readUnsignedByte());
+            columns[i] = new Column(name, dataType);
+        }
+    }
+
+    private void dropTableIfExistsAndCreate(Column[] columns) throws SQLException {
+        StringJoiner createTableJoiner = new StringJoiner(", ", "CREATE TABLE Data (", ");");
+        for (Column column : columns) {
+            createTableJoiner.add(column.name + " " + column.dataType);
+        }
+        //  Drop existing data table and create new data table
+        try (Statement statement = dbConnection.createStatement()) {
+            statement.executeUpdate("DROP TABLE IF EXISTS Data;");
+            statement.executeUpdate(createTableJoiner.toString());
         }
     }
 
