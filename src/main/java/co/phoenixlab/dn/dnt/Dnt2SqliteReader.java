@@ -25,10 +25,7 @@
 package co.phoenixlab.dn.dnt;
 
 import java.io.DataInputStream;
-import java.io.EOFException;
 import java.io.IOException;
-import java.nio.ByteBuffer;
-import java.nio.channels.SeekableByteChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -82,7 +79,6 @@ class Dnt2SqliteReader {
         }
     }
 
-    private static final int HEADER_SIZE = 10;
     private static final int MAGIC_NUMBER = 0x00000000;
 
     private final Path dntFile;
@@ -127,19 +123,6 @@ class Dnt2SqliteReader {
                 statement.executeUpdate(createTableJoiner.toString());
             }
         }
-    }
-
-    private int fillBuffer(SeekableByteChannel byteChannel, ByteBuffer buffer) throws IOException {
-        int bytesRead = 0;
-        int read;
-        while ((read = byteChannel.read(buffer)) > 0) {
-            bytesRead += read;
-        }
-        buffer.rewind();
-        if (read == -1) {
-            throw new EOFException();
-        }
-        return bytesRead;
     }
 
     class Column {
