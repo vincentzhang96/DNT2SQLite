@@ -85,10 +85,12 @@ class Dnt2SqliteReader {
 
     private final Path dntFile;
     private final Connection dbConnection;
+    private byte[] stringBytes;
 
     public Dnt2SqliteReader(Path dntFile, Connection dbConnection) {
         this.dntFile = dntFile;
         this.dbConnection = dbConnection;
+        this.stringBytes = new byte[1024];
     }
 
     public void read(DoubleConsumer progressListener)
@@ -146,9 +148,15 @@ class Dnt2SqliteReader {
                     break;
                 case STRING:
                     int len = inputStream.readUnsignedShort();
-                    byte[] strBytes = new byte[len];
-                    inputStream.readFully(strBytes);
-                    statement.setString(i, new String(strBytes, StandardCharsets.UTF_8));
+                    if (len > stringBytes.length) {
+                        stringBytes = new byte[len];
+                    }
+                    int read;
+                    int last = 0;
+                    while ((read = inputStream.read(stringBytes, last, len - last)) > 0) {
+                        last += read;
+                    }
+                    statement.setString(i, new String(stringBytes, 0, len, StandardCharsets.UTF_8));
                     break;
                 case UINT32:
                     statement.setInt(i, inputStream.readInt());
