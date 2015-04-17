@@ -84,11 +84,20 @@ class Dnt2SqliteReader {
     private static final int MAGIC_NUMBER = 0x00000000;
 
     private final Path dntFile;
+    private final String tableName;
     private final Connection dbConnection;
     private byte[] stringBytes;
 
     public Dnt2SqliteReader(Path dntFile, Connection dbConnection) {
         this.dntFile = dntFile;
+        String tableName = dntFile.getFileName().toString();
+        if (tableName.endsWith(".dnt")) {
+            tableName = tableName.substring(0, tableName.length() - ".dnt".length());
+        }
+        if (tableName.endsWith("table")) {
+            tableName = tableName.substring(0, tableName.length() - "table".length());
+        }
+        this.tableName = tableName;
         this.dbConnection = dbConnection;
         this.stringBytes = new byte[1024];
     }
@@ -111,7 +120,7 @@ class Dnt2SqliteReader {
 
     private void readRows(DoubleConsumer progressListener, LittleEndianDataInputStream inputStream, Column[] columns, long rowCount) throws SQLException, IOException {
         dbConnection.setAutoCommit(false);
-        StringJoiner joiner = new StringJoiner(",", "INSERT INTO Data VALUES(", ");");
+        StringJoiner joiner = new StringJoiner(",", "INSERT INTO " + tableName + " VALUES(", ");");
         for (int i = 0; i < columns.length; i++) {
             joiner.add("?");
         }
@@ -183,20 +192,26 @@ class Dnt2SqliteReader {
             byte[] stringBytes = new byte[nameLen];
             inputStream.readFully(stringBytes);
             String name = new String(stringBytes, StandardCharsets.UTF_8);
+            if (name.startsWith("_")) {
+                name = name.substring(1);
+            }
             DataType dataType = DataType.fromId(inputStream.readUnsignedByte());
             columns[i] = new Column(name, dataType);
         }
     }
 
     private void dropTableIfExistsAndCreate(Column[] columns) throws SQLException {
-        StringJoiner createTableJoiner = new StringJoiner(", ", "CREATE TABLE Data (", ");");
+        StringJoiner createTableJoiner = new StringJoiner(", ", "CREATE TABLE " + tableName + " (", ");");
         for (Column column : columns) {
-            createTableJoiner.add(column.name + " " + column.dataType);
+            createTableJoiner.add("\"" + column.name + "\" " + column.dataType);
         }
+        String update = createTableJoiner.toString();
+        System.out.println(update);
+        System.out.println();
         //  Drop existing data table and create new data table
         try (Statement statement = dbConnection.createStatement()) {
-            statement.executeUpdate("DROP TABLE IF EXISTS Data;");
-            statement.executeUpdate(createTableJoiner.toString());
+            statement.executeUpdate("DROP TABLE IF EXISTS " + tableName +";");
+            statement.executeUpdate(update);
         }
     }
 
