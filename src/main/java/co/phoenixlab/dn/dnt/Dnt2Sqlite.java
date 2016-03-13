@@ -25,11 +25,17 @@
 package co.phoenixlab.dn.dnt;
 
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Scanner;
 import java.util.function.DoubleConsumer;
+import java.util.stream.Stream;
 
 public class Dnt2Sqlite {
 
@@ -41,8 +47,47 @@ public class Dnt2Sqlite {
         }
     }
 
-    public static void main(String[] args) {
-
+    public static void main(String[] args) throws IOException, SQLException {
+        Scanner scanner = new Scanner(System.in);
+        System.out.println("Enter the DNT files to read. Enter \"done\" when finished.");
+        List<String> files = new ArrayList<>();
+        String line;
+        while (!"done".equals(line = scanner.nextLine())) {
+            files.add(line);
+        }
+        System.out.println("Parsed " + files.size() + " filenames");
+        System.out.println("Enter the target SQLite file to dump to");
+        String out = scanner.nextLine();
+        Dnt2Sqlite dnt2Sqlite = new Dnt2Sqlite();
+        //.convert(Paths.get(dnt), Paths.get(out), d -> System.out.printf("%.2f%n", d));
+        Path outPath = Paths.get(out);
+        DoubleConsumer progressReporter = d -> System.out.printf("%.2f\r", d);
+        files.stream().
+                map(Paths::get).
+                forEach(p -> {
+                    if (Files.isDirectory(p)) {
+                        try (Stream<Path> fs = Files.walk(p, 1)) {
+                            fs.filter(Files::isRegularFile).
+                                    filter(f -> f.getFileName().toString().endsWith(".dnt")).
+                                    forEach(f -> {
+                                        try {
+                                            dnt2Sqlite.convert(f, outPath, progressReporter);
+                                        } catch (SQLException | IOException e) {
+                                            e.printStackTrace();
+                                        }
+                                    });
+                        } catch (Exception e) {
+                            e.printStackTrace();
+                        }
+                    } else {
+                        try {
+                            dnt2Sqlite.convert(p, outPath, progressReporter);
+                        } catch (SQLException | IOException e) {
+                            e.printStackTrace();
+                        }
+                    }
+                });
+        scanner.close();
     }
 
     private final DoubleConsumer noOpListener;

@@ -120,7 +120,7 @@ class Dnt2SqliteReader {
 
     private void readRows(DoubleConsumer progressListener, LittleEndianDataInputStream inputStream, Column[] columns, long rowCount) throws SQLException, IOException {
         dbConnection.setAutoCommit(false);
-        StringJoiner joiner = new StringJoiner(",", "INSERT INTO " + tableName + " VALUES(", ");");
+        StringJoiner joiner = new StringJoiner(",", "INSERT INTO \"" + tableName + "\" VALUES(", ");");
         for (int i = 0; i < columns.length; i++) {
             joiner.add("?");
         }
@@ -201,8 +201,10 @@ class Dnt2SqliteReader {
     }
 
     private void dropTableIfExistsAndCreate(Column[] columns) throws SQLException {
-        StringJoiner createTableJoiner = new StringJoiner(", ", "CREATE TABLE " + tableName + " (", ");");
-        for (Column column : columns) {
+        StringJoiner createTableJoiner = new StringJoiner(", ", "CREATE TABLE \"" + tableName + "\" (", ");");
+        createTableJoiner.add("\"RowId\" " + DataType.INT32 + " PRIMARY KEY");
+        for (int i = 1; i < columns.length; i++) {
+            Column column = columns[i];
             createTableJoiner.add("\"" + column.name + "\" " + column.dataType);
         }
         String update = createTableJoiner.toString();
@@ -210,7 +212,7 @@ class Dnt2SqliteReader {
         System.out.println();
         //  Drop existing data table and create new data table
         try (Statement statement = dbConnection.createStatement()) {
-            statement.executeUpdate("DROP TABLE IF EXISTS " + tableName +";");
+            statement.executeUpdate("DROP TABLE IF EXISTS \"" + tableName +"\";");
             statement.executeUpdate(update);
         }
     }
