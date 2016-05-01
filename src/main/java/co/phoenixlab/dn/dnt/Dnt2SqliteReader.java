@@ -26,6 +26,7 @@ package co.phoenixlab.dn.dnt;
 
 import java.io.DataInputStream;
 import java.io.IOException;
+import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -34,60 +35,18 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.Arrays;
 import java.util.NoSuchElementException;
 import java.util.StringJoiner;
 import java.util.function.DoubleConsumer;
 
 class Dnt2SqliteReader {
 
-    enum DataType {
-        UINT32("UNSIGNED INT"),
-        INT32("INT"),
-        BOOL("BIT"),
-        FLOAT,
-        DOUBLE,
-        STRING("TEXT");
-
-        private DataType() {
-            this.sqlName = this.name();
-        }
-
-        private DataType(String sqlName) {
-            this.sqlName = sqlName;
-        }
-
-        public final String sqlName;
-
-        @Override
-        public String toString() {
-            return sqlName;
-        }
-
-        public static DataType fromId(int id) {
-            switch (id) {
-                case 1:
-                    return STRING;
-                case 2:
-                    return BOOL;
-                case 3:
-                    return INT32;
-                case 4:
-                    return FLOAT;
-                case 5:
-                    return DOUBLE;
-                default:
-                    throw new NoSuchElementException("No DataType with ID " + id);
-            }
-        }
-    }
-
     private static final int MAGIC_NUMBER = 0x00000000;
-
     private final Path dntFile;
     private final String tableName;
     private final Connection dbConnection;
     private byte[] stringBytes;
-
     public Dnt2SqliteReader(Path dntFile, Connection dbConnection) {
         this.dntFile = dntFile;
         String tableName = dntFile.getFileName().toString();
@@ -112,9 +71,16 @@ class Dnt2SqliteReader {
             Column[] columns = new Column[inputStream.readUnsignedShort() + 1];
             long rowCount = inputStream.readUnsignedInt();
             readColumnHeaders(inputStream, columns);
+            setUpDatabase();
             dropTableIfExistsAndCreate(columns);
             readRows(progressListener, inputStream, columns, rowCount);
             progressListener.accept(1D);
+        }
+    }
+
+    private void setUpDatabase() throws SQLException {
+        try (PreparedStatement statement = dbConnection.prepareStatement("PRAGMA encoding = \"UTF-8\";")) {
+            statement.execute();
         }
     }
 
@@ -165,7 +131,7 @@ class Dnt2SqliteReader {
                     while ((read = inputStream.read(stringBytes, last, len - last)) > 0) {
                         last += read;
                     }
-                    statement.setString(i, new String(stringBytes, 0, len, StandardCharsets.UTF_8));
+                    statement.setString(i, decode(stringBytes, 0, len));
                     break;
                 case UINT32:
                     statement.setInt(i, inputStream.readInt());
@@ -174,6 +140,27 @@ class Dnt2SqliteReader {
                     throw new IllegalStateException("This shouldn't happen, this is for happy compiler");
             }
         }
+    }
+
+    private String decode(byte[] data, int start, int end) {
+        if (start == end) {
+            return "";
+        }
+        if (Byte.toUnsignedInt(data[start]) > 127) {
+            return new String(data, start, end, StandardCharsets.UTF_16BE);
+        } else {
+
+            return new String (data, start, end, StandardCharsets.UTF_16BE);
+        }
+    }
+
+    private String arrayToString(byte[] array, int start, int end) {
+        StringBuilder builder = new StringBuilder();
+        for (int i = start; i < end; i++) {
+            byte b = array[i];
+            builder.append(String.format("%02X", b));
+        }
+        return builder.toString();
     }
 
     private void validateMagicNumber(int magic) throws IOException {
@@ -212,8 +199,49 @@ class Dnt2SqliteReader {
         System.out.println();
         //  Drop existing data table and create new data table
         try (Statement statement = dbConnection.createStatement()) {
-            statement.executeUpdate("DROP TABLE IF EXISTS \"" + tableName +"\";");
+            statement.executeUpdate("DROP TABLE IF EXISTS \"" + tableName + "\";");
             statement.executeUpdate(update);
+        }
+    }
+
+    enum DataType {
+        UINT32("UNSIGNED INT"),
+        INT32("INT"),
+        BOOL("BIT"),
+        FLOAT,
+        DOUBLE,
+        STRING("TEXT");
+
+        public final String sqlName;
+
+        private DataType() {
+            this.sqlName = this.name();
+        }
+
+        private DataType(String sqlName) {
+            this.sqlName = sqlName;
+        }
+
+        public static DataType fromId(int id) {
+            switch (id) {
+                case 1:
+                    return STRING;
+                case 2:
+                    return BOOL;
+                case 3:
+                    return INT32;
+                case 4:
+                    return FLOAT;
+                case 5:
+                    return DOUBLE;
+                default:
+                    throw new NoSuchElementException("No DataType with ID " + id);
+            }
+        }
+
+        @Override
+        public String toString() {
+            return sqlName;
         }
     }
 
