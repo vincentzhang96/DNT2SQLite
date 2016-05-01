@@ -65,15 +65,13 @@ public class Dnt2Sqlite {
         Path outPath = Paths.get(out);
         DoubleConsumer progressReporter = d -> System.out.printf("%.2f\r", d);
         Predicate<Path> endsWithDnt = f -> f.getFileName().toString().endsWith(".dnt");
-        Predicate<Path> endsWithExt = f -> f.getFileName().toString().endsWith(".ext");
-        Predicate<Path> endsWithValidExtension = endsWithDnt.or(endsWithExt);
         files.stream().
                 map(Paths::get).
                 forEach(p -> {
                     if (Files.isDirectory(p)) {
                         try (Stream<Path> fs = Files.walk(p, 1)) {
                             fs.filter(Files::isRegularFile).
-                                    filter(endsWithValidExtension).
+                                    filter(endsWithDnt).
                                     forEach(f -> convert(f, dnt2Sqlite,  outPath,  progressReporter));
                         } catch (Exception e) {
                             e.printStackTrace();

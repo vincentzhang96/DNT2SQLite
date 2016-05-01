@@ -26,7 +26,6 @@ package co.phoenixlab.dn.dnt;
 
 import java.io.DataInputStream;
 import java.io.IOException;
-import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -43,12 +42,17 @@ import java.util.function.DoubleConsumer;
 class Dnt2SqliteReader {
 
     private static final int MAGIC_NUMBER = 0x00000000;
+    private static final String ROW_ID = "RowId";
     private final Path dntFile;
     private final String tableName;
     private final Connection dbConnection;
-    private byte[] stringBytes;
+    private Path extFile;
+    private byte[] stringByteCache;
+    private boolean hasExt = false;
+
     public Dnt2SqliteReader(Path dntFile, Connection dbConnection) {
         this.dntFile = dntFile;
+        ext(dntFile);
         String tableName = dntFile.getFileName().toString();
         if (tableName.endsWith(".dnt")) {
             tableName = tableName.substring(0, tableName.length() - ".dnt".length());
@@ -58,7 +62,13 @@ class Dnt2SqliteReader {
         }
         this.tableName = tableName;
         this.dbConnection = dbConnection;
-        this.stringBytes = new byte[1024];
+        this.stringByteCache = new byte[1024];
+    }
+
+    private void ext(Path path) {
+        String filename = path.getFileName().toString().replace(".dnt", ".ext");
+        extFile = path.getParent().resolve(filename);
+        hasExt = Files.exists(extFile);
     }
 
     public void read(DoubleConsumer progressListener)
@@ -67,12 +77,37 @@ class Dnt2SqliteReader {
         try (LittleEndianDataInputStream inputStream = new LittleEndianDataInputStream(
                 new DataInputStream(
                         Files.newInputStream(dntFile, StandardOpenOption.READ)))) {
-            validateMagicNumber(inputStream.readInt());
-            Column[] columns = new Column[inputStream.readUnsignedShort() + 1];
+
+            readDnt(progressListener, inputStream);
+            if (hasExt) {
+                System.out.println("Reading ext");
+                readExt(progressListener);
+            }
+        }
+    }
+
+    private void readDnt(DoubleConsumer progressListener, LittleEndianDataInputStream inputStream)
+            throws IOException, SQLException {
+        validateMagicNumber(inputStream.readInt());
+        Column[] columns = new Column[inputStream.readUnsignedShort() + 1];
+        long rowCount = inputStream.readUnsignedInt();
+        readColumnHeaders(inputStream, columns);
+        setUpDatabase();
+        dropTableIfExistsAndCreate(columns);
+        readRows(progressListener, inputStream, columns, rowCount);
+        progressListener.accept(1D);
+    }
+
+    private void readExt(DoubleConsumer progressListener)
+            throws IOException, SQLException {
+        try (LittleEndianDataInputStream inputStream = new LittleEndianDataInputStream(
+                new DataInputStream(Files.newInputStream(extFile, StandardOpenOption.READ)))) {
+            progressListener.accept(0D);
+            int unknown = inputStream.readInt();
+            Column[] columns = new Column[inputStream.readInt() + 1];
             long rowCount = inputStream.readUnsignedInt();
-            readColumnHeaders(inputStream, columns);
-            setUpDatabase();
-            dropTableIfExistsAndCreate(columns);
+            readExtColumnHeaders(inputStream, columns);
+            System.out.println(Arrays.toString(columns));
             readRows(progressListener, inputStream, columns, rowCount);
             progressListener.accept(1D);
         }
@@ -86,26 +121,38 @@ class Dnt2SqliteReader {
 
     private void readRows(DoubleConsumer progressListener, LittleEndianDataInputStream inputStream, Column[] columns, long rowCount) throws SQLException, IOException {
         dbConnection.setAutoCommit(false);
-        StringJoiner joiner = new StringJoiner(",", "INSERT INTO \"" + tableName + "\" VALUES(", ");");
-        for (int i = 0; i < columns.length; i++) {
-            joiner.add("?");
+        StringJoiner columnJoiner = new StringJoiner(",", "(", ")");
+        StringJoiner valJoiner = new StringJoiner(",", "(", ")");
+        for (Column column : columns) {
+            columnJoiner.add("\"" + column.name + "\"");
+            valJoiner.add("?");
         }
+        String query = String.format("INSERT OR REPLACE INTO \"%s\" %s VALUES%s;",
+                tableName,
+                columnJoiner.toString(),
+                valJoiner.toString());
         long interval = Math.max(1, rowCount / 20);
-        try (PreparedStatement statement = dbConnection.prepareStatement(joiner.toString())) {
-            for (long row = 0; row < rowCount; row++) {
-                readRowData(inputStream, columns, statement);
+        long row = 0;
+        long lastRowId = -1;
+        try (PreparedStatement statement = dbConnection.prepareStatement(query)) {
+            for (; row < rowCount; row++) {
+                lastRowId = readRowData(inputStream, columns, statement);
                 statement.executeUpdate();
                 if (row % interval == 0) {
                     dbConnection.commit();
                 }
                 progressListener.accept((double) row / (double) rowCount);
             }
+        } catch (Exception e) {
+            System.err.println("failed on physical row " + row + ", rowId " + lastRowId);
+            throw e;
         }
         dbConnection.commit();
         dbConnection.setAutoCommit(true);
     }
 
-    private void readRowData(LittleEndianDataInputStream inputStream, Column[] columns, PreparedStatement statement) throws SQLException, IOException {
+    private long readRowData(LittleEndianDataInputStream inputStream, Column[] columns, PreparedStatement statement) throws SQLException, IOException {
+        long rowId = -1;
         for (int i = 1; i <= columns.length; i++) {
             Column column = columns[i - 1];
             switch (column.dataType) {
@@ -116,30 +163,33 @@ class Dnt2SqliteReader {
                     statement.setFloat(i, inputStream.readFloat());
                     break;
                 case INT32:
-                    statement.setInt(i, inputStream.readInt());
+                case UINT32:
+                    int v = inputStream.readInt();
+                    if (column.name.equals(ROW_ID)) {
+                        rowId = v;
+                    }
+                    statement.setInt(i, v);
                     break;
                 case BOOL:
                     statement.setInt(i, inputStream.readInt());
                     break;
                 case STRING:
                     int len = inputStream.readUnsignedShort();
-                    if (len > stringBytes.length) {
-                        stringBytes = new byte[len];
+                    if (len > stringByteCache.length) {
+                        stringByteCache = new byte[len];
                     }
                     int read;
                     int last = 0;
-                    while ((read = inputStream.read(stringBytes, last, len - last)) > 0) {
+                    while ((read = inputStream.read(stringByteCache, last, len - last)) > 0) {
                         last += read;
                     }
-                    statement.setString(i, decode(stringBytes, 0, len));
-                    break;
-                case UINT32:
-                    statement.setInt(i, inputStream.readInt());
+                    statement.setString(i, decode(stringByteCache, 0, len));
                     break;
                 default:
                     throw new IllegalStateException("This shouldn't happen, this is for happy compiler");
             }
         }
+        return rowId;
     }
 
     private String decode(byte[] data, int start, int end) {
@@ -150,7 +200,7 @@ class Dnt2SqliteReader {
             return new String(data, start, end, StandardCharsets.UTF_16BE);
         } else {
 
-            return new String (data, start, end, StandardCharsets.UTF_16BE);
+            return new String(data, start, end, StandardCharsets.UTF_8);
         }
     }
 
@@ -173,7 +223,7 @@ class Dnt2SqliteReader {
     }
 
     private void readColumnHeaders(LittleEndianDataInputStream inputStream, Column[] columns) throws IOException {
-        columns[0] = new Column("RowId", DataType.INT32);
+        columns[0] = new Column(ROW_ID, DataType.INT32);
         for (int i = 1; i < columns.length; i++) {
             int nameLen = inputStream.readUnsignedShort();
             byte[] stringBytes = new byte[nameLen];
@@ -183,6 +233,20 @@ class Dnt2SqliteReader {
                 name = name.substring(1);
             }
             DataType dataType = DataType.fromId(inputStream.readUnsignedByte());
+            columns[i] = new Column(name, dataType);
+        }
+    }
+
+    private void readExtColumnHeaders(LittleEndianDataInputStream inputStream, Column[] columns) throws IOException {
+        columns[0] = new Column("RowId", DataType.INT32);
+        byte[] buf = new byte[64];
+        for (int i = 1; i < columns.length; i++) {
+            inputStream.readFully(buf);
+            String name = new String(buf, StandardCharsets.UTF_8).trim();
+            if (name.startsWith("_")) {
+                name = name.substring(1);
+            }
+            DataType dataType = DataType.fromId(inputStream.readInt());
             columns[i] = new Column(name, dataType);
         }
     }
