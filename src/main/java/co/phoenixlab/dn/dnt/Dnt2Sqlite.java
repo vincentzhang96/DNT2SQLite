@@ -33,8 +33,10 @@ import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Properties;
 import java.util.Scanner;
 import java.util.function.DoubleConsumer;
+import java.util.function.Predicate;
 import java.util.stream.Stream;
 
 public class Dnt2Sqlite {
@@ -62,32 +64,33 @@ public class Dnt2Sqlite {
         //.convert(Paths.get(dnt), Paths.get(out), d -> System.out.printf("%.2f%n", d));
         Path outPath = Paths.get(out);
         DoubleConsumer progressReporter = d -> System.out.printf("%.2f\r", d);
+        Predicate<Path> endsWithDnt = f -> f.getFileName().toString().endsWith(".dnt");
+        Predicate<Path> endsWithExt = f -> f.getFileName().toString().endsWith(".ext");
+        Predicate<Path> endsWithValidExtension = endsWithDnt.or(endsWithExt);
         files.stream().
                 map(Paths::get).
                 forEach(p -> {
                     if (Files.isDirectory(p)) {
                         try (Stream<Path> fs = Files.walk(p, 1)) {
                             fs.filter(Files::isRegularFile).
-                                    filter(f -> f.getFileName().toString().endsWith(".dnt")).
-                                    forEach(f -> {
-                                        try {
-                                            dnt2Sqlite.convert(f, outPath, progressReporter);
-                                        } catch (SQLException | IOException e) {
-                                            e.printStackTrace();
-                                        }
-                                    });
+                                    filter(endsWithValidExtension).
+                                    forEach(f -> convert(f, dnt2Sqlite,  outPath,  progressReporter));
                         } catch (Exception e) {
                             e.printStackTrace();
                         }
                     } else {
-                        try {
-                            dnt2Sqlite.convert(p, outPath, progressReporter);
-                        } catch (SQLException | IOException e) {
-                            e.printStackTrace();
-                        }
+                        convert(p, dnt2Sqlite,  outPath,  progressReporter);
                     }
                 });
         scanner.close();
+    }
+
+    private static void convert(Path f, Dnt2Sqlite dnt2Sqlite, Path outPath, DoubleConsumer progressReporter) {
+        try {
+            dnt2Sqlite.convert(f, outPath, progressReporter);
+        } catch (SQLException | IOException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     private final DoubleConsumer noOpListener;
@@ -105,7 +108,10 @@ public class Dnt2Sqlite {
     public void convert(Path dntFileIn, Path sqliteFileOut, DoubleConsumer progressListener)
             throws SQLException, IOException {
         String jdbcUri = "jdbc:sqlite:" + sqliteFileOut.toString().replace('\\', '/');
-        try (Connection connection = DriverManager.getConnection(jdbcUri)) {
+        Properties properties = new Properties();
+        properties.put("useUnicode", "true");
+        properties.put("characterEncoding", "UTF-8");
+        try (Connection connection = DriverManager.getConnection(jdbcUri, properties)) {
             process(dntFileIn, connection, progressListener);
         }
     }
