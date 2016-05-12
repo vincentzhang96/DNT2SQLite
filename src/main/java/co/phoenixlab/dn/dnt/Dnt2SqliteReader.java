@@ -34,7 +34,6 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.sql.Statement;
-import java.util.Arrays;
 import java.util.NoSuchElementException;
 import java.util.StringJoiner;
 import java.util.function.DoubleConsumer;
@@ -46,16 +45,19 @@ class Dnt2SqliteReader {
     private final Path dntFile;
     private final String tableName;
     private final Connection dbConnection;
-    private Path extFile;
     private byte[] stringByteCache;
-    private boolean hasExt = false;
+    private boolean ext = false;
 
     public Dnt2SqliteReader(Path dntFile, Connection dbConnection) {
         this.dntFile = dntFile;
-        ext(dntFile);
         String tableName = dntFile.getFileName().toString();
         if (tableName.endsWith(".dnt")) {
             tableName = tableName.substring(0, tableName.length() - ".dnt".length());
+        }
+        if (tableName.endsWith(".ext")) {
+            tableName = tableName.substring(0, tableName.length() - ".ext".length());
+            ext = true;
+            tableName += "_ext";
         }
         if (tableName.endsWith("table")) {
             tableName = tableName.substring(0, tableName.length() - "table".length());
@@ -65,12 +67,6 @@ class Dnt2SqliteReader {
         this.stringByteCache = new byte[1024];
     }
 
-    private void ext(Path path) {
-        String filename = path.getFileName().toString().replace(".dnt", ".ext");
-        extFile = path.getParent().resolve(filename);
-        hasExt = Files.exists(extFile);
-    }
-
     public void read(DoubleConsumer progressListener)
             throws SQLException, IOException {
         progressListener.accept(0D);
@@ -78,10 +74,10 @@ class Dnt2SqliteReader {
                 new DataInputStream(
                         Files.newInputStream(dntFile, StandardOpenOption.READ)))) {
 
-            readDnt(progressListener, inputStream);
-            if (hasExt) {
-                System.out.println("Reading ext");
-                readExt(progressListener);
+            if (ext) {
+                readExt(progressListener, inputStream);
+            } else {
+                readDnt(progressListener, inputStream);
             }
         }
     }
@@ -98,19 +94,16 @@ class Dnt2SqliteReader {
         progressListener.accept(1D);
     }
 
-    private void readExt(DoubleConsumer progressListener)
+    private void readExt(DoubleConsumer progressListener, LittleEndianDataInputStream inputStream)
             throws IOException, SQLException {
-        try (LittleEndianDataInputStream inputStream = new LittleEndianDataInputStream(
-                new DataInputStream(Files.newInputStream(extFile, StandardOpenOption.READ)))) {
-            progressListener.accept(0D);
-            int unknown = inputStream.readInt();
-            Column[] columns = new Column[inputStream.readInt() + 1];
-            long rowCount = inputStream.readUnsignedInt();
-            readExtColumnHeaders(inputStream, columns);
-            System.out.println(Arrays.toString(columns));
-            readRows(progressListener, inputStream, columns, rowCount);
-            progressListener.accept(1D);
-        }
+        int unknown = inputStream.readInt();
+        Column[] columns = new Column[inputStream.readInt() + 1];
+        long rowCount = inputStream.readUnsignedInt();
+        readExtColumnHeaders(inputStream, columns);
+        setUpDatabase();
+        dropTableIfExistsAndCreate(columns);
+        readRows(progressListener, inputStream, columns, rowCount);
+        progressListener.accept(1D);
     }
 
     private void setUpDatabase() throws SQLException {
@@ -127,26 +120,28 @@ class Dnt2SqliteReader {
             columnJoiner.add("\"" + column.name + "\"");
             valJoiner.add("?");
         }
-        String query = String.format("INSERT OR REPLACE INTO \"%s\" %s VALUES%s;",
+        String query = String.format("INSERT INTO \"%s\" %s VALUES%s;",
                 tableName,
                 columnJoiner.toString(),
                 valJoiner.toString());
-        long interval = Math.max(1, rowCount / 20);
+        long interval = Math.max(100, rowCount / 10);
         long row = 0;
         long lastRowId = -1;
+        double rC = (double) rowCount;
         try (PreparedStatement statement = dbConnection.prepareStatement(query)) {
             for (; row < rowCount; row++) {
                 lastRowId = readRowData(inputStream, columns, statement);
                 statement.executeUpdate();
                 if (row % interval == 0) {
                     dbConnection.commit();
+                    progressListener.accept(row / rC);
                 }
-                progressListener.accept((double) row / (double) rowCount);
             }
         } catch (Exception e) {
             System.err.println("failed on physical row " + row + ", rowId " + lastRowId);
             throw e;
         }
+        progressListener.accept(1D);
         dbConnection.commit();
         dbConnection.setAutoCommit(true);
     }
@@ -199,7 +194,6 @@ class Dnt2SqliteReader {
         if (Byte.toUnsignedInt(data[start]) > 127) {
             return new String(data, start, end, StandardCharsets.UTF_16BE);
         } else {
-
             return new String(data, start, end, StandardCharsets.UTF_8);
         }
     }
@@ -259,8 +253,8 @@ class Dnt2SqliteReader {
             createTableJoiner.add("\"" + column.name + "\" " + column.dataType);
         }
         String update = createTableJoiner.toString();
-        System.out.println(update);
-        System.out.println();
+//        System.out.println(update);
+//        System.out.println();
         //  Drop existing data table and create new data table
         try (Statement statement = dbConnection.createStatement()) {
             statement.executeUpdate("DROP TABLE IF EXISTS \"" + tableName + "\";");
