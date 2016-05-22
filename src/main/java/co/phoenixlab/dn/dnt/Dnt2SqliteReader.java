@@ -166,7 +166,7 @@ class Dnt2SqliteReader {
                     statement.setInt(i, v);
                     break;
                 case BOOL:
-                    statement.setInt(i, inputStream.readInt());
+                    statement.setBoolean(i, inputStream.readInt() != 0);
                     break;
                 case STRING:
                     int len = inputStream.readUnsignedShort();
@@ -265,7 +265,7 @@ class Dnt2SqliteReader {
     enum DataType {
         UINT32("UNSIGNED INT"),
         INT32("INT"),
-        BOOL("BIT"),
+        BOOL("BOOL"),
         FLOAT,
         DOUBLE,
         STRING("TEXT");
