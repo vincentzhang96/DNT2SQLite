@@ -124,7 +124,7 @@ class Dnt2SqliteReader {
                 tableName,
                 columnJoiner.toString(),
                 valJoiner.toString());
-        long interval = Math.max(100, rowCount / 10);
+        long interval = Math.max(1000, rowCount / 10);
         long row = 0;
         long lastRowId = -1;
         double rC = (double) rowCount;
