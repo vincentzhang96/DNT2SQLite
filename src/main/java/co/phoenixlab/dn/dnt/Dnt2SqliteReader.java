@@ -60,9 +60,6 @@ class Dnt2SqliteReader {
             ext = true;
             tableName += "_ext";
         }
-        if (tableName.endsWith("table")) {
-            tableName = tableName.substring(0, tableName.length() - "table".length());
-        }
         this.tableName = tableName;
         this.dbConnection = dbConnection;
         this.stringByteCache = new byte[1024];
