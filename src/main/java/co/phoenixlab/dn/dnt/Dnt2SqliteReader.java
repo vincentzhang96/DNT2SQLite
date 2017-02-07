@@ -26,6 +26,7 @@ package co.phoenixlab.dn.dnt;
 
 import java.io.DataInputStream;
 import java.io.IOException;
+import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -191,11 +192,7 @@ class Dnt2SqliteReader {
         if (start == end) {
             return "";
         }
-        if (Byte.toUnsignedInt(data[start]) > 127) {
-            return new String(data, start, end, StandardCharsets.UTF_16BE);
-        } else {
-            return new String(data, start, end, StandardCharsets.UTF_8);
-        }
+        return new String(data, start, end, Charset.forName("euc-kr"));
     }
 
     private String arrayToString(byte[] array, int start, int end) {
