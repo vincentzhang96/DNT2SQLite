@@ -36,6 +36,7 @@ import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.NoSuchElementException;
+import java.util.Optional;
 import java.util.StringJoiner;
 import java.util.function.DoubleConsumer;
 
@@ -48,8 +49,13 @@ class Dnt2SqliteReader {
     private final Connection dbConnection;
     private byte[] stringByteCache;
     private boolean ext = false;
+    private String tableOverride;
 
     public Dnt2SqliteReader(Path dntFile, Connection dbConnection) {
+        this(dntFile, dbConnection, null);
+    }
+
+    public Dnt2SqliteReader(Path dntFile, Connection dbConnection, String tableOverride) {
         this.dntFile = dntFile;
         String tableName = dntFile.getFileName().toString();
         if (tableName.endsWith(".dnt")) {
@@ -60,7 +66,8 @@ class Dnt2SqliteReader {
             ext = true;
             tableName += "_ext";
         }
-        this.tableName = tableName;
+        this.tableOverride = tableOverride;
+        this.tableName = Optional.ofNullable(tableOverride).orElse(tableName);
         this.dbConnection = dbConnection;
         this.stringByteCache = new byte[1024];
     }
@@ -118,7 +125,7 @@ class Dnt2SqliteReader {
             columnJoiner.add("\"" + column.name + "\"");
             valJoiner.add("?");
         }
-        String query = String.format("INSERT INTO \"%s\" %s VALUES%s;",
+        String query = String.format("INSERT OR IGNORE INTO \"%s\" %s VALUES%s;",
                 tableName,
                 columnJoiner.toString(),
                 valJoiner.toString());
@@ -240,19 +247,26 @@ class Dnt2SqliteReader {
     }
 
     private void dropTableIfExistsAndCreate(Column[] columns) throws SQLException {
-        StringJoiner createTableJoiner = new StringJoiner(", ", "CREATE TABLE \"" + tableName + "\" (", ");");
+        StringJoiner createTableJoiner = new StringJoiner(", ",
+            "CREATE TABLE IF NOT EXISTS \"" + tableName + "\" (",
+            ");");
         createTableJoiner.add("\"RowId\" " + DataType.INT32 + " PRIMARY KEY");
         for (int i = 1; i < columns.length; i++) {
             Column column = columns[i];
             createTableJoiner.add("\"" + column.name + "\" " + column.dataType);
         }
         String update = createTableJoiner.toString();
-//        System.out.println(update);
-//        System.out.println();
-        //  Drop existing data table and create new data table
-        try (Statement statement = dbConnection.createStatement()) {
-            statement.executeUpdate("DROP TABLE IF EXISTS \"" + tableName + "\";");
-            statement.executeUpdate(update);
+        if (tableOverride == null) {
+            //  Drop existing data table and create new data table
+            try (Statement statement = dbConnection.createStatement()) {
+                statement.executeUpdate("DROP TABLE IF EXISTS \"" + tableName + "\";");
+                statement.executeUpdate(update);
+            }
+        } else {
+            //  Create new data table if it doesn't exist
+            try (Statement statement = dbConnection.createStatement()) {
+                statement.executeUpdate(update);
+            }
         }
     }
 

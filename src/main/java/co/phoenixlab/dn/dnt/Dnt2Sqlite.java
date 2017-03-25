@@ -64,9 +64,15 @@ public class Dnt2Sqlite {
 
     public static void main(String[] args) throws IOException, SQLException {
         Scanner scanner = new Scanner(System.in);
+        System.out.println("Would you like to collapse common tables (e.g. item)? [Y/(N)]");
+        String line = scanner.nextLine();
+        boolean collapse = false;
+        if (line.equalsIgnoreCase("y")) {
+            collapse = true;
+        }
+        System.out.println("DNT2SQLITE will " + (collapse ? "collapse" : "not collapse") + " common tables.");
         System.out.println("Enter the DNT files to read. Enter \"done\" when finished.");
         List<String> files = new ArrayList<>();
-        String line;
         while (!"done".equals(line = scanner.nextLine())) {
             files.add(line);
         }
@@ -80,6 +86,7 @@ public class Dnt2Sqlite {
             Predicate<Path> endsWithDnt = f -> f.getFileName().toString().endsWith(".dnt");
             Predicate<Path> endsWithExt = f -> f.getFileName().toString().endsWith(".ext");
             Predicate<Path> endsWithRightType = endsWithDnt.or(endsWithExt);
+            final boolean collapseF = collapse;
             files.stream().
                     map(Paths::get).
                     forEach(p -> {
@@ -87,12 +94,12 @@ public class Dnt2Sqlite {
                             try (Stream<Path> fs = Files.walk(p, 1)) {
                                 fs.filter(Files::isRegularFile).
                                         filter(endsWithRightType).
-                                        forEach(f -> convert(f, dnt2Sqlite));
+                                        forEach(f -> convert(f, dnt2Sqlite, collapseF));
                             } catch (Exception e) {
                                 e.printStackTrace();
                             }
                         } else {
-                            convert(p, dnt2Sqlite);
+                            convert(p, dnt2Sqlite, collapseF);
                         }
                     });
         } finally {
@@ -103,12 +110,12 @@ public class Dnt2Sqlite {
         }
     }
 
-    private static void convert(Path f, Dnt2Sqlite dnt2Sqlite) {
+    private static void convert(Path f, Dnt2Sqlite dnt2Sqlite, boolean collapse) {
         try {
             System.out.println();
             long startTime = System.currentTimeMillis();
             dnt2Sqlite.convert(f, d -> System.out.printf("\r[%5.1f%%] Converting %s ",
-                    d * 100D, f.getFileName().toString()));
+                    d * 100D, f.getFileName().toString()), collapse);
             System.out.printf("\r[  OK  ] Converting %s (took %,.2f sec)",
                     f.getFileName().toString(), (System.currentTimeMillis() - startTime) / 1000D);
         } catch (SQLException | IOException e) {
@@ -118,33 +125,90 @@ public class Dnt2Sqlite {
 
     public void convert(Path dntFileIn)
             throws SQLException, IOException {
-        convert(dntFileIn, noOpListener);
+        convert(dntFileIn, noOpListener, false);
     }
 
-    public void convert(Path dntFileIn, DoubleConsumer progressListener)
+    public void convert(Path dntFileIn, DoubleConsumer progressListener, boolean collapse)
             throws SQLException, IOException {
-        process(dntFileIn, connection, progressListener);
+        process(dntFileIn, connection, progressListener, collapse);
     }
 
     public Connection readDntAsInMemoryDb(Path dntFileIn)
             throws SQLException, IOException {
-        return readDntAsInMemoryDb(dntFileIn, noOpListener);
+        return readDntAsInMemoryDb(dntFileIn, noOpListener, false);
     }
 
-    public Connection readDntAsInMemoryDb(Path dntFileIn, DoubleConsumer progressListener)
+    public Connection readDntAsInMemoryDb(Path dntFileIn, DoubleConsumer progressListener, boolean collapse)
             throws SQLException, IOException {
         Connection connection = DriverManager.getConnection("jdbc:sqlite::memory:");
-        process(dntFileIn, connection, progressListener);
+        process(dntFileIn, connection, progressListener, collapse);
         return connection;
     }
 
-    private void process(Path dntFileIn, Connection connection, DoubleConsumer progressListener)
+    private void process(Path dntFileIn, Connection connection, DoubleConsumer progressListener, boolean collapse)
             throws SQLException, IOException {
-        Dnt2SqliteReader reader = new Dnt2SqliteReader(dntFileIn, connection);
+        String override = collapse ? getOverride(dntFileIn.getFileName().toString().toLowerCase()) : null;
+        Dnt2SqliteReader reader = new Dnt2SqliteReader(dntFileIn, connection, override);
         reader.read(progressListener);
     }
 
     private void close() throws SQLException {
         connection.close();
+    }
+
+    private String getOverride(String filename) {
+        if (filename.startsWith("costumemixinfo")) {
+            return "costumemixinfotable_virtual";
+        }
+        if (filename.startsWith("enchanttable")) {
+            return "enchanttable_virtual";
+        }
+        if (filename.startsWith("gachatable")) {
+            return "gachatable_virtual";
+        }
+        if (filename.startsWith("imprintingtable")) {
+            return "imprintingtable_virtual";
+        }
+        if (filename.startsWith("itemtable")) {
+            return "itemtable_virtual";
+        }
+        if (filename.startsWith("itemcompoundtable")) {
+            return "itemcompoundtable_virtual";
+        }
+        if (filename.startsWith("itemdroptable")) {
+            return "itemdroptable_virtual";
+        }
+        if (filename.startsWith("itemdropgrouptable")) {
+            return "itemdropgrouptable_virtual";
+        }
+        if (filename.startsWith("itemgaintable")) {
+            return "itemgaintable_virtual";
+        }
+        if (filename.startsWith("itemperiod")) {
+            return "itemperiodtable_virtual";
+        }
+        if (filename.startsWith("monstertable")) {
+            return "monstertable_virtual";
+        }
+        if (filename.startsWith("monsterweighttable")) {
+            return "monsterweighttable_virtual";
+        }
+        if (filename.startsWith("partstable")) {
+            return "partstable_virtual";
+        }
+        if (filename.startsWith("potentialtable")) {
+            return "potentialtable_virtual";
+        }
+        if (filename.startsWith("potentialjeweltable")) {
+            return "potentialjeweltable_virtual";
+        }
+        if (filename.startsWith("weapontable")) {
+            return "weapontable_virtual";
+        }
+        if (filename.startsWith("wingtable")) {
+            return "wingtable_virtual";
+        }
+
+        return null;
     }
 }
