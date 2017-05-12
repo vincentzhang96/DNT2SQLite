@@ -52,14 +52,18 @@ public class Dnt2Sqlite {
     private final DoubleConsumer noOpListener;
     private Connection connection;
 
-    public Dnt2Sqlite(Path sqliteFileOut) throws SQLException {
+    public Dnt2Sqlite(String jdbcUriSuffix) throws SQLException {
         noOpListener = d -> {
         };
-        String jdbcUri = "jdbc:sqlite:" + sqliteFileOut.toString().replace('\\', '/');
+        String jdbcUri = "jdbc:sqlite:" + jdbcUriSuffix;
         Properties properties = new Properties();
         properties.put("useUnicode", "true");
         properties.put("characterEncoding", "UTF-8");
         connection = DriverManager.getConnection(jdbcUri, properties);
+    }
+
+    public Dnt2Sqlite(Path sqliteFileOut) throws SQLException {
+        this(sqliteFileOut.toString().replace('\\', '/'));
     }
 
     public static void main(String[] args) throws IOException, SQLException {
