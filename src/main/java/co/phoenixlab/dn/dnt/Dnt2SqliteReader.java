@@ -224,9 +224,9 @@ class Dnt2SqliteReader {
             byte[] stringBytes = new byte[nameLen];
             inputStream.readFully(stringBytes);
             String name = new String(stringBytes, StandardCharsets.UTF_8);
-            if (name.startsWith("_")) {
-                name = name.substring(1);
-            }
+//            if (name.startsWith("_")) {
+//                name = name.substring(1);
+//            }
             DataType dataType = DataType.fromId(inputStream.readUnsignedByte());
             columns[i] = new Column(name, dataType);
         }
@@ -238,9 +238,9 @@ class Dnt2SqliteReader {
         for (int i = 1; i < columns.length; i++) {
             inputStream.readFully(buf);
             String name = new String(buf, StandardCharsets.UTF_8).trim();
-            if (name.startsWith("_")) {
-                name = name.substring(1);
-            }
+//            if (name.startsWith("_")) {
+//                name = name.substring(1);
+//            }
             DataType dataType = DataType.fromId(inputStream.readInt());
             columns[i] = new Column(name, dataType);
         }
